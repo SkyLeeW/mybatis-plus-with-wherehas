@@ -4,6 +4,9 @@ import java.lang.reflect.Field;
 import java.util.Arrays;
 import java.util.List;
 
+/**
+ * 提供字段类型判定相关的静态工具方法。
+ */
 public class FieldTypeUtils {
     // 存储基础类型和 String 类型对应的类对象
     private static final List<Class<?>> PRIMITIVE_AND_STRING_TYPES = Arrays.asList(

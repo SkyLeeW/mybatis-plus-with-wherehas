@@ -28,9 +28,11 @@ import java.io.Serializable;
 import java.util.*;
 
 /**
- * 用于查询入口
- * @author jieyun
- * @date 2021/12/2 16:05
+ * 用于封装关联查询过程中的预加载、筛选和结果装配能力。
+ *
+ * @author skyleewy
+ * @param <T> 实体类型参数，用于约束主表查询和关联字段引用
+ * @param <C> 结果类型参数，用于标识当前查询流程绑定的视图类型
  */
 @Service
 @RequiredArgsConstructor
@@ -427,12 +429,16 @@ public class ExecuteWithSelectService<T,C> {
         SubSqlResult subWhere = new SubSqlResult();
         subWhere.setIsBlankWhereColumn(true);
         if (this.relationQuery != null && !this.relationModelStructureMap.isEmpty()){
-            // 5. 调用 hasRelationService 时，现在传递的是一个包含 Wrapper 的 map
+            // 调用关联子查询构造逻辑并把条件参数一并回传给主查询。
             subWhere = hasRelationService.relationModelQuery(this.entityClass, this.relationModelStructureMap, this.relationQuery);
             if(subWhere.getIsBlankWhereColumn() || subWhere.getIsEmptyData()){
                 return  subWhere;
             } else {
-                ((AbstractWrapper<?, ?, ?>) queryWrapper).apply(subWhere.getSql());
+                List<Object> parameters = subWhere.getParameters();
+                ((AbstractWrapper<?, ?, ?>) queryWrapper).apply(
+                    subWhere.getSql(),
+                    parameters == null ? new Object[0] : parameters.toArray()
+                );
             }
             return subWhere;
         }

@@ -13,9 +13,13 @@ Maven 坐标：
 <dependency>
     <groupId>io.github.skyleew</groupId>
     <artifactId>mybatis-plus-with-wherehas</artifactId>
-    <version>1.0.0</version>
+    <version>1.0.0-SNAPSHOT</version>
 </dependency>
 ```
+
+说明：
+- 当前仓库 `pom.xml` 中的开发版本为 `1.0.0-SNAPSHOT`。
+- 发布正式版后，请把依赖版本替换为实际发布版本号。
 
 核心围绕几个类：注解 `@RelationModel`、工具 `RelationUtil`、查询入口 `ExecuteWithSelectService`、合并逻辑 `HasRelationService`、SQL 执行与字段映射 `RelationSqlService`，以及基础 `BaseHasManyMapper` 扩展。
 
@@ -62,7 +66,18 @@ public class User {
 public interface UserMapper extends BaseHasManyMapper<User, UserVO> { }
 ```
 
-3) 预加载 with 与 whereHas 使用示例
+3) Spring Boot 自动装配
+
+- 本库已提供自动装配，会自动注册：
+  - `ExecuteWithSelectService`
+  - `HasRelationService`
+  - `RelationSqlService`
+  - `RawSqlMapper`
+  - 库内 `RawSqlMapper.xml`
+- 普通 Spring Boot + MyBatis / MyBatis-Plus 项目中，一般不需要再为本库单独配置 `@MapperScan`。
+- 自动扫描范围已收敛为“仅扫描带 `@Mapper` 的接口”，不会把 `BaseHasManyMapper` 这类基础接口误注册为 Bean。
+
+4) 预加载 with 与 whereHas 使用示例
 
 ```java
 @Autowired UserMapper userMapper;
@@ -244,7 +259,7 @@ List<User> filtered = userMapper
 - 使用规范：
   - `WhereClosure` 中字符串列名写“子表列名”（如 `status`、`category_name`）；
   - 自表无需任何额外配置；
-  - 参数可用 `QueryWrapper` 的占位写法（内部会内联为字面量再注入 apply）。
+  - 参数会保持为 `apply(sql, args...)` 的绑定参数形式，不会再把值直接内联进 SQL 字符串。
 
 示例：自表 GoodsCategory 查询直接子分类条件筛父分类
 
@@ -290,7 +305,7 @@ EXISTS (
 注意：如果你的“主表查询”层引入了自定义别名（而非默认 `表名.列名`），需要同步扩展外层列的别名来源；当前默认使用主表的表名限定列名。
 
 - 计数（count）：当 `@RelationModel(count=true)` 时，走 `RelationSqlService.getCountResult`，SQL 形如：
-  - `SELECT <targetField>, COUNT(*) AS relation_count FROM <子表> WHERE <targetField> IN (...) GROUP BY <targetField>`
+  - `SELECT <targetField>, COUNT(*) AS relation_count FROM <子表> WHERE <targetField> IN (...) [AND 未删除条件] GROUP BY <targetField>`
   - 把计数值回填到主表对应数字字段（`Integer/Long`）。
 
 - 递归深度：`with(int deep)` 控制递归层级（默认 1）。当子表实体自身也声明了 `@RelationModel` 时，可层层预加载。
@@ -386,8 +401,8 @@ EXISTS (
 
 - 深度与命中：
   - `with(depth)` 仅控制最大递归层数；是否实际预加载由规则匹配决定。
-  - 示例：`with(2).withOnly("addr", "addr.children")` 会加载 `addr` 和其 `children`；
-    若仅 `withOnly("addr")` 则不会自动包含 `children`，除非写 `"addr.children"` 或 `"addr.*"`。
+  - 示例：`userMapper.with(2).only("addr", "addr.children")` 会加载 `addr` 和其 `children`；
+    若仅 `userMapper.withOnly("addr")` 则不会自动包含 `children`，除非写 `"addr.children"` 或 `"addr.*"`。
 
 - 其它说明：
   - 规则大小写不敏感（类名/字段名）。
@@ -414,7 +429,8 @@ EXISTS (
   - 失败会保留原值并打印日志。
 
 - VO 转换：
-  - 泛型 VO：`selectVoList/selectVoPage/selectVoOne/selectVoById` 使用 `MapstructUtils.convert`，请保证对应 VO 类存在，并在你工程中提供 MapStruct 依赖/实现。
+  - 泛型 VO：`selectVoList/selectVoPage/selectVoOne/selectVoById/selectVoByIds` 基于 `BeanConversionUtils`，底层使用 Jackson `ObjectMapper.convertValue(...)` 做对象转换。
+  - 因此不依赖 MapStruct，也不要求业务工程额外生成 Mapper 实现类。
   - 动态 VO（一个实体对应多个 VO）：无需为每个 VO 新建 Mapper，可在 Service 层调用：
     ```java
     // 假设 OrderMapper 仍然是 BaseHasManyMapper<Order, Order>
@@ -447,19 +463,21 @@ EXISTS (
 
 ## 关键类与路径
 
-- 注解：`src/main/java/org/jieyun/relationmapping/annotation/RelationModel.java`
-- Mapper 扩展：`src/main/java/org/jieyun/relationmapping/mapper/BaseHasManyMapper.java`
-- 查询入口：`src/main/java/org/jieyun/relationmapping/service/ExecuteWithSelectService.java`
-- 关联合并：`src/main/java/org/jieyun/relationmapping/service/HasRelationService.java`
-- SQL 与字段映射：`src/main/java/org/jieyun/relationmapping/service/RelationSqlService.java`
-- 关系元数据：`src/main/java/org/jieyun/relationmapping/domain/*`
-- 注解扫描与默认规则：`src/main/java/org/jieyun/relationmapping/utils/RelationUtil.java`
-- 子查询闭包：`src/main/java/org/jieyun/relationmapping/interfaces/WhereClosure.java`
-- 原生 SQL Mapper：`src/main/java/org/jieyun/relationmapping/mapper/RawSqlMapper.java`, `src/main/resources/mapper/RawSqlMapper.xml`
+- 注解：`src/main/java/io/github/skyleew/relationmapping/annotation/RelationModel.java`
+- Mapper 扩展：`src/main/java/io/github/skyleew/relationmapping/mapper/BaseHasManyMapper.java`
+- 查询入口：`src/main/java/io/github/skyleew/relationmapping/service/ExecuteWithSelectService.java`
+- 关联合并：`src/main/java/io/github/skyleew/relationmapping/service/HasRelationService.java`
+- SQL 与字段映射：`src/main/java/io/github/skyleew/relationmapping/service/RelationSqlService.java`
+- 关系元数据：`src/main/java/io/github/skyleew/relationmapping/domain/*`
+- 注解扫描与默认规则：`src/main/java/io/github/skyleew/relationmapping/utils/RelationUtil.java`
+- 子查询闭包：`src/main/java/io/github/skyleew/relationmapping/interfaces/WhereClosure.java`
+- 原生 SQL Mapper：`src/main/java/io/github/skyleew/relationmapping/mapper/RawSqlMapper.java`, `src/main/resources/mapper/RawSqlMapper.xml`
 - 按需排除过滤器：
-  - 接口：`src/main/java/org/jieyun/relationmapping/filter/RelationFilter.java`
-  - 规则解析与匹配：`src/main/java/org/jieyun/relationmapping/filter/RelationSelector.java`
-  - 规则结构：`src/main/java/org/jieyun/relationmapping/filter/ParsedRule.java`
+  - 接口：`src/main/java/io/github/skyleew/relationmapping/filter/RelationFilter.java`
+  - 规则解析与匹配：`src/main/java/io/github/skyleew/relationmapping/filter/RelationSelector.java`
+  - 规则结构：`src/main/java/io/github/skyleew/relationmapping/filter/ParsedRule.java`
+- 自动装配：`src/main/java/io/github/skyleew/relationmapping/autoconfigure/RelationMappingAutoConfiguration.java`
+- XML 装载器：`src/main/java/io/github/skyleew/relationmapping/autoconfigure/RelationMappingMapperXmlLoader.java`
 
 ---
 
@@ -470,7 +488,7 @@ EXISTS (
   - 兼容直接传入列名（snake_case）
   - 兜底尝试驼峰→下划线匹配
 
-对应代码：`src/main/java/org/jieyun/relationmapping/service/RelationSqlService.java:273`, `src/main/java/org/jieyun/relationmapping/service/RelationSqlService.java:429`。
+对应代码：`src/main/java/io/github/skyleew/relationmapping/service/RelationSqlService.java`。
 
 - 新增：按需排除关联（with 排除规则）
   - 新 API：`withExcept(String... rules)`、`with().exclude(String... rules)`
@@ -479,13 +497,13 @@ EXISTS (
 
 对应代码：
 - 接口与解析：
-  - `src/main/java/org/jieyun/relationmapping/filter/RelationFilter.java`
-  - `src/main/java/org/jieyun/relationmapping/filter/RelationSelector.java`
-  - `src/main/java/org/jieyun/relationmapping/filter/ParsedRule.java`
+  - `src/main/java/io/github/skyleew/relationmapping/filter/RelationFilter.java`
+  - `src/main/java/io/github/skyleew/relationmapping/filter/RelationSelector.java`
+  - `src/main/java/io/github/skyleew/relationmapping/filter/ParsedRule.java`
 - 入口集成：
-  - `src/main/java/org/jieyun/relationmapping/mapper/BaseHasManyMapper.java`
-  - `src/main/java/org/jieyun/relationmapping/service/ExecuteWithSelectService.java`
-  - `src/main/java/org/jieyun/relationmapping/service/HasRelationService.java`
+  - `src/main/java/io/github/skyleew/relationmapping/mapper/BaseHasManyMapper.java`
+  - `src/main/java/io/github/skyleew/relationmapping/service/ExecuteWithSelectService.java`
+  - `src/main/java/io/github/skyleew/relationmapping/service/HasRelationService.java`
 
 ---
 

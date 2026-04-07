@@ -7,7 +7,16 @@ import io.github.skyleew.relationmapping.annotation.RelationModel;
 import java.lang.reflect.Field;
 import java.util.Arrays;
 
+/**
+ * 提供数据表主键字段解析相关的通用工具方法。
+ */
 public class DbUtil {
+    /**
+     * 获取实体对应的主键字段名，优先读取关联注解声明，再回退到表元数据主键列。
+     *
+     * @param clazz 需要解析主键字段的实体类型
+     * @return 返回主键字段名，若未解析到则返回空字符串
+     */
     public static String  getTablePkName(Class<?> clazz) {
         String targetFieldValue = "";
         for (Field field : clazz.getDeclaredFields()) {

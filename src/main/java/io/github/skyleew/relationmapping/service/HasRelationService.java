@@ -239,6 +239,7 @@ public class HasRelationService {
                     continue;
                 }
                 existsSqlList.add("(" + one.getSql() + ")");
+                subSqlResult.getParameters().addAll(one.getParameters());
             }
 
             if (!existsSqlList.isEmpty()) {

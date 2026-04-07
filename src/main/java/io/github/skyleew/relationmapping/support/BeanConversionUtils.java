@@ -1,5 +1,6 @@
 package io.github.skyleew.relationmapping.support;
 
+import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.JavaType;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.json.JsonMapper;
@@ -14,9 +15,10 @@ import java.util.List;
 public final class BeanConversionUtils {
 
     /**
-     * 统一复用带 JSR310 模块的 ObjectMapper，避免日期时间字段转换失真。
+     * 统一复用带 JSR310 模块且忽略目标未知字段的 ObjectMapper，避免实体关联字段多于 VO 字段时转换失败。
      */
     private static final ObjectMapper OBJECT_MAPPER = JsonMapper.builder()
+        .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false)
         .findAndAddModules()
         .build();
 
@@ -77,4 +79,3 @@ public final class BeanConversionUtils {
         return result;
     }
 }
-
