@@ -13,6 +13,7 @@
     <description>MyBatis-Plus 的 with 和 whereHas 关联查询扩展库</description>
     <url>https://github.com/SkyLeeW/mybatis-plus-with-wherehas</url>
 
+
     <licenses>
         <license>
             <name>Apache License, Version 2.0</name>
