@@ -12,6 +12,7 @@ import io.github.skyleew.relationmapping.domain.RelationModelStructure;
 import io.github.skyleew.relationmapping.domain.SubSqlResult;
 import io.github.skyleew.relationmapping.mapper.RawSqlMapper;
 import io.github.skyleew.relationmapping.utils.LogicDeleteHelper;
+import io.github.skyleew.relationmapping.utils.ReflectionFieldUtils;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -34,6 +35,11 @@ import java.util.regex.Pattern;
 @RequiredArgsConstructor
 public class RelationSqlService {
     /**
+     * 统一使用这个参数名绑定关联键列表，避免多处散落硬编码。
+     */
+    private static final String RELATION_IDS_PARAMETER = "relationIds";
+
+    /**
      * 匹配 Wrapper 生成的命名参数占位符，便于转换为 apply 的顺序参数。
      */
     private static final Pattern WRAPPER_PARAMETER_PATTERN =
@@ -51,8 +57,6 @@ public class RelationSqlService {
 
     private final ObjectMapper objectMapper;
     private final RawSqlMapper rawSqlMapper;
-    private static final String SQL_TEMPLATE  = "select {} from {} where {} in  {}";
-
     private static final String BASE_SQL_TEMPLATE = "select {} from {} ";
 
     /**
@@ -65,8 +69,16 @@ public class RelationSqlService {
 
         String targetTable = fieldMetadata.getRelationTableStructure().getTableInfo().getTableName();
         String pk = fieldMetadata.getRelationTableStructure().getRelationFieldKey();
-        String ids = "(" + fieldMetadata.getSelfTableStructure().getIds()+")";
-        String sql = StrUtil.format(SQL_TEMPLATE,fieldMetadata.getRelationTableStructure().getTableInfo().getAllSqlSelect(),targetTable,pk,ids);
+        List<Object> relationValues = fieldMetadata.getSelfTableStructure().getRelationValues();
+        if (relationValues == null || relationValues.isEmpty()) {
+            return Collections.emptyList();
+        }
+        String sqlTemplate = StrUtil.format(
+            BASE_SQL_TEMPLATE,
+            fieldMetadata.getRelationTableStructure().getTableInfo().getAllSqlSelect(),
+            targetTable
+        );
+        String sql = " WHERE " + buildInExpression(pk, RELATION_IDS_PARAMETER, relationValues);
 
         // 若子表实体存在 @TableLogic 注解，则追加“未删除”条件。
         String notDeletedPred1 = LogicDeleteHelper
@@ -76,14 +88,16 @@ public class RelationSqlService {
             )
             .orElse(null);
         if (StrUtil.isNotBlank(notDeletedPred1)) {
-            sql = appendWhereCondition(sql, notDeletedPred1);
+            sql += " AND " + notDeletedPred1;
         }
         HashMap<String,Object> execute = new HashMap<>();
-        execute.put("sql",sql);
+        execute.put("sqlTemplate",sqlTemplate);
+        execute.put("conditions",sql);
+        putNamedCollectionParameter(execute, RELATION_IDS_PARAMETER, relationValues);
         if (log.isDebugEnabled()) {
-            log.debug("[RelationSqlService] Relation SQL: {}", sql);
+            log.debug("[RelationSqlService] Relation SQL: {}{}", sqlTemplate, sql);
         }
-        List<Object> raw = executeRawSQL(execute);
+        List<Object> raw = executeBindRawSQL(execute);
         debugFirstRowKeys(raw, "relation");
         debugColumnPresence(raw, Arrays.asList("spec_arr", "sku"), "relation");
         return formatV2(fieldMetadata, raw);
@@ -101,8 +115,8 @@ public class RelationSqlService {
     public List<Object> getResultWithWhere(RelationModelStructure fieldMetadata, Wrapper<?> childWrapper) {
         String targetTable = fieldMetadata.getRelationTableStructure().getTableInfo().getTableName();
         String targetField = fieldMetadata.getRelationTableStructure().getRelationFieldKey();
-        String ids = fieldMetadata.getSelfTableStructure().getIds();
-        if (StrUtil.isBlank(ids)) {
+        List<Object> relationValues = fieldMetadata.getSelfTableStructure().getRelationValues();
+        if (relationValues == null || relationValues.isEmpty()) {
             return Collections.emptyList();
         }
 
@@ -112,7 +126,7 @@ public class RelationSqlService {
         );
 
         // 基础 WHERE（子表外键在主表 id 集中）。
-        String base = targetField + " IN (" + ids + ")";
+        String base = buildInExpression(targetField, RELATION_IDS_PARAMETER, relationValues);
 
         // 逻辑删除条件。
         String notDeleted = LogicDeleteHelper
@@ -144,6 +158,7 @@ public class RelationSqlService {
         execute.put("sqlTemplate", sqlTemplate);
         execute.put("conditions", merged);
 
+        putNamedCollectionParameter(execute, RELATION_IDS_PARAMETER, relationValues);
         putWrapperParameters(execute, childWrapper);
 
         if (log.isDebugEnabled()) {
@@ -154,22 +169,6 @@ public class RelationSqlService {
         debugFirstRowKeys(raw, "withWhere");
         debugColumnPresence(raw, Arrays.asList("spec_arr", "sku"), "withWhere");
         return formatV2(fieldMetadata, raw);
-    }
-
-    /**
-     * 追加查询条件：
-     * - 若原 SQL 已包含 WHERE，则拼接 AND 条件
-     * - 若原 SQL 不包含 WHERE，则补齐 WHERE 再拼接条件
-     */
-    private String appendWhereCondition(String sql, String predicate) {
-        if (StrUtil.isBlank(predicate)) {
-            return sql;
-        }
-        String lower = sql.toLowerCase();
-        if (lower.contains(" where ")) {
-            return sql + " AND " + predicate;
-        }
-        return sql + " WHERE " + predicate;
     }
 
     /**
@@ -251,7 +250,7 @@ public class RelationSqlService {
     private Map<String, Field> getFieldMap(Class<?> clazz) {
         return FIELD_CACHE.computeIfAbsent(clazz, targetClass -> {
             Map<String, Field> fieldMap = new HashMap<>();
-            for (Field field : targetClass.getDeclaredFields()) {
+            for (Field field : ReflectionFieldUtils.getAllFields(targetClass)) {
                 fieldMap.put(field.getName(), field);
             }
             return fieldMap;
@@ -264,7 +263,7 @@ public class RelationSqlService {
     private Map<String, String> getColumnFieldMap(Class<?> clazz) {
         return COLUMN_FIELD_CACHE.computeIfAbsent(clazz, targetClass -> {
             Map<String, String> columnFieldMap = new HashMap<>();
-            for (Field field : targetClass.getDeclaredFields()) {
+            for (Field field : ReflectionFieldUtils.getAllFields(targetClass)) {
                 columnFieldMap.put(field.getName(), field.getName());
                 columnFieldMap.put(StrUtil.toUnderlineCase(field.getName()), field.getName());
                 TableField tableField = field.getAnnotation(TableField.class);
@@ -498,13 +497,13 @@ public class RelationSqlService {
     public Map<String, Long> getCountResult(RelationModelStructure fieldMetadata) {
         String targetTable = fieldMetadata.getRelationTableStructure().getTableInfo().getTableName();
         String targetField = fieldMetadata.getRelationTableStructure().getRelationFieldKey(); // 目标表的关联字段
-        String ids = fieldMetadata.getSelfTableStructure().getIds();
+        List<Object> relationValues = fieldMetadata.getSelfTableStructure().getRelationValues();
 
-        if (ids == null || ids.isEmpty()) {
+        if (relationValues == null || relationValues.isEmpty()) {
             return new HashMap<>();
         }
 
-        String whereClause = targetField + " IN (" + ids + ")";
+        String whereClause = buildInExpression(targetField, RELATION_IDS_PARAMETER, relationValues);
         String notDeletedPred2 = LogicDeleteHelper
             .buildNotDeletedPredicate(
                 fieldMetadata.getRelationTableStructure().getReflectClass(),
@@ -514,15 +513,16 @@ public class RelationSqlService {
         if (StrUtil.isNotBlank(notDeletedPred2)) {
             whereClause += " AND " + notDeletedPred2;
         }
-        String sql = "SELECT " + targetField
-            + ", COUNT(*) as relation_count FROM " + targetTable
-            + " WHERE " + whereClause
-            + " GROUP BY " + targetField;
+        String sqlTemplate = "SELECT " + targetField
+            + ", COUNT(*) as relation_count FROM " + targetTable;
+        String conditions = " WHERE " + whereClause + " GROUP BY " + targetField;
 
         HashMap<String, Object> execute = new HashMap<>();
-        execute.put("sql", sql);
+        execute.put("sqlTemplate", sqlTemplate);
+        execute.put("conditions", conditions);
+        putNamedCollectionParameter(execute, RELATION_IDS_PARAMETER, relationValues);
 
-        List<Object> rawResult = executeRawSQL(execute);
+        List<Object> rawResult = executeBindRawSQL(execute);
 
         // 将 List<HashMap> 转换为 Map<String, Long> 以方便处理
         return rawResult.stream()
@@ -692,6 +692,22 @@ public class RelationSqlService {
     }
 
     /**
+     * 为 IN 条件生成顺序绑定占位符，确保字符串、UUID 等类型也能安全参与关联查询。
+     *
+     * @param columnName 目标列名
+     * @param parameterName 参数名
+     * @param values 关联值列表
+     * @return 完整的 IN 条件表达式
+     */
+    private String buildInExpression(String columnName, String parameterName, List<?> values) {
+        StringJoiner placeholderJoiner = new StringJoiner(", ", columnName + " IN (", ")");
+        for (int index = 0; index < values.size(); index++) {
+            placeholderJoiner.add("#{" + parameterName + "[" + index + "]}");
+        }
+        return placeholderJoiner.toString();
+    }
+
+    /**
      * 把 Wrapper 参数按 MyBatis 期望的 ew 结构放入执行上下文。
      */
     private void putWrapperParameters(HashMap<String, Object> execute, Wrapper<?> wrapper) {
@@ -701,6 +717,17 @@ public class RelationSqlService {
         HashMap<String, Object> ew = new HashMap<>();
         ew.put("paramNameValuePairs", abstractWrapper.getParamNameValuePairs());
         execute.put("ew", ew);
+    }
+
+    /**
+     * 把集合参数按命名键放入执行上下文，供 XML 中的顺序占位符安全绑定。
+     *
+     * @param execute 执行上下文
+     * @param parameterName 参数名
+     * @param values 参数列表
+     */
+    private void putNamedCollectionParameter(HashMap<String, Object> execute, String parameterName, List<?> values) {
+        execute.put(parameterName, values);
     }
 
 }

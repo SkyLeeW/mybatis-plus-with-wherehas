@@ -76,7 +76,7 @@ C:\Users\你的用户名\.m2\settings.xml
 <dependency>
     <groupId>io.github.skyleew</groupId>
     <artifactId>mybatis-plus-with-wherehas</artifactId>
-    <version>1.0.0</version>
+    <version>1.0.3</version>
 </dependency>
 ```
 
@@ -100,16 +100,14 @@ mvn -f D:\dev\base\jieyun-base-java-dev-package\jieyun-common\mybatis-plus-with-
 
 当前 `pom.xml` 配置了：
 
-- `autoPublish=false`
+- `autoPublish=true`
 - `waitUntil=validated`
 
-这意味着上传成功后，Portal 只会先做校验，不会自动对外发布。
+这意味着上传成功后，Portal 会先完成校验，校验通过后自动对外发布。
 
-你需要到下面页面手工确认发布：
+你仍然可以到下面页面查看部署状态：
 
 - [Deployments](https://central.sonatype.com/publishing/deployments)
-
-如果校验通过，再点击发布即可。
 
 ## 7. 首次发布建议检查项
 
@@ -153,5 +151,5 @@ mvn -version
 
 ## 9. 本仓库当前状态说明
 
-当前桌面环境缺少 Maven，可完成代码与 POM 改造，但无法在当前环境直接执行 `mvn clean deploy`。  
-因此正式发布前，仍需要在安装了 Maven 与 GPG 的机器上执行一次完整发布验证。
+当前仓库已经具备 Maven Central 的发布配置。  
+正式发布前，仍需要在已安装 Maven 与 GPG，且已配置 Central 凭据与签名信息的机器上执行一次完整发布验证。

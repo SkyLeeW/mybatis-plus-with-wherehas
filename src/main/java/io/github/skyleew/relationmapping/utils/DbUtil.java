@@ -19,7 +19,7 @@ public class DbUtil {
      */
     public static String  getTablePkName(Class<?> clazz) {
         String targetFieldValue = "";
-        for (Field field : clazz.getDeclaredFields()) {
+        for (Field field : ReflectionFieldUtils.getAllFields(clazz)) {
             targetFieldValue = Arrays.stream(field.getDeclaredAnnotations())
                 .filter(anno -> anno.annotationType().equals(RelationModel.class))
                 .findFirst()

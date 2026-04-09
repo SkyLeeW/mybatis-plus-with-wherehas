@@ -7,18 +7,27 @@ import lombok.extern.slf4j.Slf4j;
 import io.github.skyleew.relationmapping.domain.RelationModelStructure;
 import io.github.skyleew.relationmapping.domain.SubSqlResult;
 import io.github.skyleew.relationmapping.domain.TableStructure;
-import io.github.skyleew.relationmapping.support.JsonSupport;
+import io.github.skyleew.relationmapping.support.BeanConversionUtils;
 import io.github.skyleew.relationmapping.filter.RelationFilter;
 import io.github.skyleew.relationmapping.utils.RelationUtil;
+import io.github.skyleew.relationmapping.utils.ReflectionFieldUtils;
 import org.springframework.stereotype.Service;
 
 import java.lang.reflect.Field;
+import java.lang.reflect.Modifier;
 import java.util.*;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 @Service
 @RequiredArgsConstructor
 @Slf4j
 public class HasRelationService {
+
+    /**
+     * 匹配 apply 使用的顺序占位符，便于多段 EXISTS 合并时统一重排索引。
+     */
+    private static final Pattern APPLY_PARAMETER_PATTERN = Pattern.compile("\\{(\\d+)\\}");
 
     final RelationSqlService relationSqlService;
 
@@ -36,7 +45,7 @@ public class HasRelationService {
             for (String key : tableStructureMap.keySet()) {
                 RelationModelStructure table =  tableStructureMap.get(key);
                 getResultRelationIds(result,table);
-                if (table.getSelfTableStructure().getIds() == null || table.getSelfTableStructure().getIds().isEmpty()) {
+                if (table.getSelfTableStructure().getRelationValues() == null || table.getSelfTableStructure().getRelationValues().isEmpty()) {
                     continue;
                 }
                 // 根据 isCount 标志决定执行哪种查询
@@ -102,7 +111,7 @@ public class HasRelationService {
 
                 RelationModelStructure table = tableStructureMap.get(key);
                 getResultRelationIds(result, table);
-                if (table.getSelfTableStructure().getIds() == null || table.getSelfTableStructure().getIds().isEmpty()) {
+                if (table.getSelfTableStructure().getRelationValues() == null || table.getSelfTableStructure().getRelationValues().isEmpty()) {
                     continue;
                 }
 
@@ -155,7 +164,7 @@ public class HasRelationService {
 
                 RelationModelStructure table = tableStructureMap.get(key);
                 getResultRelationIds(result, table);
-                if (table.getSelfTableStructure().getIds() == null || table.getSelfTableStructure().getIds().isEmpty()) {
+                if (table.getSelfTableStructure().getRelationValues() == null || table.getSelfTableStructure().getRelationValues().isEmpty()) {
                     continue;
                 }
 
@@ -238,7 +247,9 @@ public class HasRelationService {
                     // 空条件不参与拼装（也不阻断其它 hasWhere）
                     continue;
                 }
-                existsSqlList.add("(" + one.getSql() + ")");
+                int parameterOffset = subSqlResult.getParameters().size();
+                String reindexedSql = reindexApplyPlaceholders(one.getSql(), parameterOffset);
+                existsSqlList.add("(" + reindexedSql + ")");
                 subSqlResult.getParameters().addAll(one.getParameters());
             }
 
@@ -250,6 +261,28 @@ public class HasRelationService {
             log.error("关联查询错误", e);
         }
         return subSqlResult;
+    }
+
+    /**
+     * 多个子查询片段合并到一次 apply 调用时，需要把每段局部占位符改成全局顺序索引。
+     *
+     * @param sql 原始 SQL 片段
+     * @param parameterOffset 当前片段参数在总参数列表中的起始偏移量
+     * @return 重排后的 SQL 片段
+     */
+    private String reindexApplyPlaceholders(String sql, int parameterOffset) {
+        if (StrUtil.isBlank(sql) || parameterOffset == 0) {
+            return sql;
+        }
+        Matcher matcher = APPLY_PARAMETER_PATTERN.matcher(sql);
+        StringBuffer stringBuffer = new StringBuffer();
+        while (matcher.find()) {
+            int currentIndex = Integer.parseInt(matcher.group(1));
+            int targetIndex = currentIndex + parameterOffset;
+            matcher.appendReplacement(stringBuffer, Matcher.quoteReplacement("{" + targetIndex + "}"));
+        }
+        matcher.appendTail(stringBuffer);
+        return stringBuffer.toString();
     }
 
 
@@ -278,7 +311,7 @@ public class HasRelationService {
         relationTableStructure.getRelationField().setAccessible(true);
         Map<String, List<Object>> groupedByDynamicField = new HashMap<>();
         for (Object o : relationResult) {
-            Object tobj =   JsonSupport.parseObject(JsonSupport.toJsonString(o) ,  relationTableStructure.getReflectClass());
+            Object tobj = convertRelationRecord(o, relationTableStructure);
             castedObjects.add(tobj);
 
             String groupKey = StrUtil.toString(relationTableStructure.getRelationField().get(tobj));
@@ -300,6 +333,22 @@ public class HasRelationService {
 
     }
 
+    /**
+     * 将关联查询结果统一转换为目标实体，已是目标类型时直接复用原对象。
+     *
+     * @param source 原始关联结果
+     * @param relationTableStructure 关联表结构
+     * @return 目标实体对象
+     */
+    @SuppressWarnings("unchecked")
+    private Object convertRelationRecord(Object source, TableStructure relationTableStructure) {
+        Class<Object> relationClass = (Class<Object>) relationTableStructure.getReflectClass();
+        if (relationClass.isInstance(source)) {
+            return relationClass.cast(source);
+        }
+        return BeanConversionUtils.convert(source, relationClass);
+    }
+
 
 
     /**
@@ -313,18 +362,16 @@ public class HasRelationService {
      */
     private void  putRelation(Object result, TableStructure selfTableStructure, Map<String, List<Object>> groupedByDynamicField) throws NoSuchFieldException, IllegalAccessException {
         Class<?> tableClass =  result.getClass();
-        Field s = tableClass.getDeclaredField(selfTableStructure.getRelationField().getName());
-        Field putFiled = tableClass.getDeclaredField(selfTableStructure.getAnnotationField().getName());
-        s.setAccessible(true);
-        putFiled.setAccessible(true);
+        Field s = resolveField(tableClass, selfTableStructure.getRelationField(), selfTableStructure.getRelationField().getName());
+        Field putFiled = resolveField(tableClass, selfTableStructure.getAnnotationField(), selfTableStructure.getAnnotationField().getName());
 
         String unionKey = StrUtil.toString(s.get(result));
         List<Object> groupData =  groupedByDynamicField.get(unionKey);
 
         if(groupData !=null){
 
-            if (putFiled.getType().equals(List.class)) {
-                putFiled.set(result, groupData);
+            if (Collection.class.isAssignableFrom(putFiled.getType())) {
+                putFiled.set(result, buildCollectionValue(putFiled.getType(), groupData));
             } else {
                 putFiled.set(result, groupData.get(0));
             }
@@ -340,8 +387,10 @@ public class HasRelationService {
      */
     private void getResultRelationIds(Object result , RelationModelStructure table) throws NoSuchFieldException, IllegalAccessException {
 
-        List<String> ids = new ArrayList<>();
+        List<Object> ids = new ArrayList<>();
         TableStructure selfTableStructure = table.getSelfTableStructure();
+        selfTableStructure.setRelationValues(new ArrayList<>());
+        selfTableStructure.setIds("");
         //判断是否是数组
         if (result instanceof List<?>) {
             for (Object o : (List<?>) result) {
@@ -351,42 +400,29 @@ public class HasRelationService {
                     // 如果是 Map，使用 relationFieldKey (通常是数据库列名) 作为 key 来获取值
                     idValue = ((Map<?, ?>) o).get(selfTableStructure.getRelationFieldKey());
                 } else {
-                    // 如果是实体对象，使用原有的反射逻辑
-                    Field f = o.getClass().getDeclaredField(selfTableStructure.getRelationField().getName());
-                    f.setAccessible(true);
-                    idValue = f.get(o);
+                    // 如果是实体对象，优先复用元数据中的字段对象并支持继承树字段。
+                    idValue = readFieldValue(o, selfTableStructure.getRelationField(), selfTableStructure.getRelationField().getName());
                 }
 
                 if (idValue != null) {
-                    ids.add(String.valueOf(idValue));
+                    ids.add(idValue);
                 }
             }
         } else {
-            Field f = result.getClass().getDeclaredField(selfTableStructure.getRelationField().getName());
-            f.setAccessible(true);
-            Object idValue = f.get(result);
+            Object idValue = readFieldValue(result, selfTableStructure.getRelationField(), selfTableStructure.getRelationField().getName());
             if (idValue != null) {
-                ids.add(String.valueOf(idValue));
+                ids.add(idValue);
             }
         }
         if (ids.isEmpty()) {
             return;
         }
         // 去重，保留顺序，避免生成 IN (1,1,1,1) 这种 SQL
-        LinkedHashSet<String> distinctIds = new LinkedHashSet<>(ids);
-        String idsStr = String.join(",", distinctIds);
-        if(idsStr.isEmpty()){
-            return ;
-        }
-        selfTableStructure.setIds(idsStr);
-    }
-    private Field findField(Class<?> clazz, String fieldName) {
-        for (Field field : clazz.getDeclaredFields()) {
-            if (field.getName().equalsIgnoreCase(fieldName)) {
-                return field;
-            }
-        }
-        return null; // 如果找不到字段，返回 null 或者抛出自定义异常
+        LinkedHashSet<Object> distinctIds = new LinkedHashSet<>(ids);
+        selfTableStructure.setRelationValues(new ArrayList<>(distinctIds));
+        selfTableStructure.setIds(
+            distinctIds.stream().map(String::valueOf).reduce((left, right) -> left + "," + right).orElse("")
+        );
     }
 
     /**
@@ -409,13 +445,11 @@ public class HasRelationService {
         Class<?> itemClass = item.getClass();
 
         // 获取主模型中用于关联的字段 (例如 User 实体中的 id 字段)
-        Field keyField = itemClass.getDeclaredField(selfTable.getRelationField().getName());
-        keyField.setAccessible(true);
+        Field keyField = resolveField(itemClass, selfTable.getRelationField(), selfTable.getRelationField().getName());
         String key = StrUtil.toString(keyField.get(item));
 
         // 获取主模型中用于接收统计数量的字段 (例如 User 实体中的 postsCount 字段)
-        Field targetField = itemClass.getDeclaredField(selfTable.getAnnotationField().getName());
-        targetField.setAccessible(true);
+        Field targetField = resolveField(itemClass, selfTable.getAnnotationField(), selfTable.getAnnotationField().getName());
 
         // 从 countMap 中查找对应的数量，如果找不到默认为 0
         Long count = countMap.getOrDefault(key, 0L);
@@ -426,6 +460,81 @@ public class HasRelationService {
         } else {
             targetField.set(item, count);
         }
+    }
+
+    /**
+     * 统一读取对象字段值，优先使用缓存的 Field，并兼容字段定义在父类的场景。
+     *
+     * @param target 目标对象
+     * @param preferredField 优先使用的字段元数据
+     * @param fieldName 字段名
+     * @return 字段值
+     * @throws IllegalAccessException 字段不可访问时抛出异常
+     * @throws NoSuchFieldException 字段不存在时抛出异常
+     */
+    private Object readFieldValue(Object target, Field preferredField, String fieldName) throws IllegalAccessException, NoSuchFieldException {
+        Field field = resolveField(target.getClass(), preferredField, fieldName);
+        return field.get(target);
+    }
+
+    /**
+     * 统一解析字段对象，支持直接复用已有元数据，也支持沿继承树回查缺失字段。
+     *
+     * @param targetClass 目标运行时类型
+     * @param preferredField 优先字段
+     * @param fieldName 字段名
+     * @return 可直接访问的字段
+     * @throws NoSuchFieldException 字段不存在时抛出异常
+     */
+    private Field resolveField(Class<?> targetClass, Field preferredField, String fieldName) throws NoSuchFieldException {
+        Field field = preferredField;
+        if (field == null || !field.getDeclaringClass().isAssignableFrom(targetClass)) {
+            field = ReflectionFieldUtils.findField(targetClass, fieldName);
+        }
+        if (field == null) {
+            throw new NoSuchFieldException(fieldName);
+        }
+        field.setAccessible(true);
+        return field;
+    }
+
+    /**
+     * 按目标字段的集合语义构造回填对象，保持列表、有序集合和具体集合实现的行为一致。
+     *
+     * @param targetType 目标字段类型
+     * @param sourceData 关联结果列表
+     * @return 适配后的集合对象
+     */
+    private Collection<Object> buildCollectionValue(Class<?> targetType, List<Object> sourceData) {
+        Collection<Object> collection = instantiateCollection(targetType);
+        collection.addAll(sourceData);
+        return collection;
+    }
+
+    /**
+     * 根据字段声明类型实例化集合对象，接口类型会回落到最接近语义的标准集合实现。
+     *
+     * @param targetType 目标字段类型
+     * @return 可写入字段的集合实例
+     */
+    @SuppressWarnings("unchecked")
+    private Collection<Object> instantiateCollection(Class<?> targetType) {
+        if (!targetType.isInterface() && !Modifier.isAbstract(targetType.getModifiers())) {
+            try {
+                Object instance = targetType.getDeclaredConstructor().newInstance();
+                if (instance instanceof Collection<?>) {
+                    return (Collection<Object>) instance;
+                }
+            } catch (Exception ignored) {
+            }
+        }
+        if (Set.class.isAssignableFrom(targetType)) {
+            return new LinkedHashSet<>();
+        }
+        if (Queue.class.isAssignableFrom(targetType) || Deque.class.isAssignableFrom(targetType)) {
+            return new ArrayDeque<>();
+        }
+        return new ArrayList<>();
     }
 
 

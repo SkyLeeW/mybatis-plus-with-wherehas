@@ -13,13 +13,13 @@ Maven 坐标：
 <dependency>
     <groupId>io.github.skyleew</groupId>
     <artifactId>mybatis-plus-with-wherehas</artifactId>
-    <version>1.0.0-SNAPSHOT</version>
+    <version>1.0.3</version>
 </dependency>
 ```
 
 说明：
-- 当前仓库 `pom.xml` 中的开发版本为 `1.0.0-SNAPSHOT`。
-- 发布正式版后，请把依赖版本替换为实际发布版本号。
+- 当前仓库准备发布的版本为 `1.0.3`。
+- 后续继续开发时，建议再切回下一个 `-SNAPSHOT` 版本。
 
 核心围绕几个类：注解 `@RelationModel`、工具 `RelationUtil`、查询入口 `ExecuteWithSelectService`、合并逻辑 `HasRelationService`、SQL 执行与字段映射 `RelationSqlService`，以及基础 `BaseHasManyMapper` 扩展。
 

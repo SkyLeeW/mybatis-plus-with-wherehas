@@ -2,7 +2,6 @@ package io.github.skyleew.relationmapping.support;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.json.JsonMapper;
 
 /**
  * 统一封装 Jackson 序列化与反序列化，避免模块继续依赖内部 JSON 工具。
@@ -10,16 +9,18 @@ import com.fasterxml.jackson.databind.json.JsonMapper;
 public final class JsonSupport {
 
     /**
-     * 统一复用带扩展模块的 ObjectMapper，确保时间类型与集合类型可直接处理。
-     */
-    private static final ObjectMapper OBJECT_MAPPER = JsonMapper.builder()
-        .findAndAddModules()
-        .build();
-
-    /**
      * 工具类不允许实例化，避免出现无意义的状态对象。
      */
     private JsonSupport() {
+    }
+
+    /**
+     * 每次按需获取严格模式 ObjectMapper，确保能复用业务工程的 Jackson 全局配置。
+     *
+     * @return 严格模式 ObjectMapper
+     */
+    private static ObjectMapper getObjectMapper() {
+        return RelationMappingObjectMapperFactory.getStrictObjectMapper();
     }
 
     /**
@@ -30,7 +31,7 @@ public final class JsonSupport {
      */
     public static String toJsonString(Object source) {
         try {
-            return OBJECT_MAPPER.writeValueAsString(source);
+            return getObjectMapper().writeValueAsString(source);
         } catch (JsonProcessingException exception) {
             throw new IllegalArgumentException("对象序列化为 JSON 失败", exception);
         }
@@ -46,10 +47,9 @@ public final class JsonSupport {
      */
     public static <T> T parseObject(String json, Class<T> targetClass) {
         try {
-            return OBJECT_MAPPER.readValue(json, targetClass);
+            return getObjectMapper().readValue(json, targetClass);
         } catch (JsonProcessingException exception) {
             throw new IllegalArgumentException("JSON 反序列化失败", exception);
         }
     }
 }
-

@@ -1,9 +1,6 @@
 package io.github.skyleew.relationmapping.support;
 
-import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.JavaType;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.json.JsonMapper;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -15,17 +12,18 @@ import java.util.List;
 public final class BeanConversionUtils {
 
     /**
-     * 统一复用带 JSR310 模块且忽略目标未知字段的 ObjectMapper，避免实体关联字段多于 VO 字段时转换失败。
-     */
-    private static final ObjectMapper OBJECT_MAPPER = JsonMapper.builder()
-        .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false)
-        .findAndAddModules()
-        .build();
-
-    /**
      * 工具类不允许实例化，防止外部错误创建无状态对象。
      */
     private BeanConversionUtils() {
+    }
+
+    /**
+     * 每次按需获取宽松模式 ObjectMapper，确保能跟随 Spring 中的最新 Jackson 配置。
+     *
+     * @return 宽松模式 ObjectMapper
+     */
+    private static com.fasterxml.jackson.databind.ObjectMapper getObjectMapper() {
+        return RelationMappingObjectMapperFactory.getLenientObjectMapper();
     }
 
     /**
@@ -40,7 +38,7 @@ public final class BeanConversionUtils {
         if (source == null || targetClass == null) {
             return null;
         }
-        return OBJECT_MAPPER.convertValue(source, targetClass);
+        return getObjectMapper().convertValue(source, targetClass);
     }
 
     /**
@@ -55,8 +53,8 @@ public final class BeanConversionUtils {
         if (source == null || source.isEmpty()) {
             return Collections.emptyList();
         }
-        JavaType targetType = OBJECT_MAPPER.getTypeFactory().constructCollectionType(List.class, elementClass);
-        return OBJECT_MAPPER.convertValue(source, targetType);
+        JavaType targetType = getObjectMapper().getTypeFactory().constructCollectionType(List.class, elementClass);
+        return getObjectMapper().convertValue(source, targetType);
     }
 
     /**

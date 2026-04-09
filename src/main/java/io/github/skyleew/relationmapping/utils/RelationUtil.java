@@ -12,6 +12,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.core.ResolvableType;
 
 import java.lang.annotation.Annotation;
+import java.util.Collection;
 import java.lang.reflect.Field;
 import java.util.HashMap;
 import java.util.List;
@@ -25,7 +26,7 @@ public class RelationUtil {
         TableInfo selfClazzTableInfo = TableInfoHelper.getTableInfo(selfClazz);
 
 
-        for (Field field : selfClazz.getDeclaredFields()) {
+        for (Field field : ReflectionFieldUtils.getAllFields(selfClazz)) {
             if (field.isAnnotationPresent(RelationModel.class)){
 
                 RelationModel relationAnnotation = field.getAnnotation(RelationModel.class);
@@ -102,7 +103,7 @@ public class RelationUtil {
         // **主要逻辑**：如果注解中没有设置 table，则回退到从字段类型推断（用于非 count 的普通关联）
         if (targetClass == void.class) {
             targetClass = field.getType();
-            if (List.class.isAssignableFrom(targetClass)) { // 使用 isAssignableFrom 更健壮
+            if (Collection.class.isAssignableFrom(targetClass)) {
                 ResolvableType genericType = ResolvableType.forField(field).getGeneric(0);
                 targetClass = genericType.resolve();
             }
@@ -148,8 +149,8 @@ public class RelationUtil {
         self.setRelationFieldKey(selfPk);
         relationMetaData.setRelationFieldKey(relationPk);
         //寻找主键对应的实体类成员变量名称
-        self.setRelationField(primaryKeyNameSearchFiled(selfPk,self.getReflectClass().getDeclaredFields()));
-        relationMetaData.setRelationField(primaryKeyNameSearchFiled(relationPk,relationMetaData.getReflectClass().getDeclaredFields()));
+        self.setRelationField(primaryKeyNameSearchFiled(selfPk, ReflectionFieldUtils.getAllFields(self.getReflectClass())));
+        relationMetaData.setRelationField(primaryKeyNameSearchFiled(relationPk, ReflectionFieldUtils.getAllFields(relationMetaData.getReflectClass())));
 
      }
 
@@ -159,7 +160,7 @@ public class RelationUtil {
      * @param fields 属性
      * @return 属性
      */
-    private static Field primaryKeyNameSearchFiled(String name ,Field[] fields) {
+    private static Field primaryKeyNameSearchFiled(String name ,List<Field> fields) {
         Field targetField = null;
         for (Field field : fields) {
             for (Annotation annotation : field.getAnnotations()) {

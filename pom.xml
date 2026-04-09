@@ -6,7 +6,7 @@
 
     <groupId>io.github.skyleew</groupId>
     <artifactId>mybatis-plus-with-wherehas</artifactId>
-    <version>1.0.0</version>
+    <version>1.0.3</version>
     <packaging>jar</packaging>
 
     <name>mybatis-plus-with-wherehas</name>
@@ -48,10 +48,12 @@
         <lombok.version>1.18.38</lombok.version>
         <hutool.version>5.8.40</hutool.version>
         <mybatis-plus.version>3.5.14</mybatis-plus.version>
+        <junit-jupiter.version>5.13.4</junit-jupiter.version>
         <maven-compiler-plugin.version>3.14.0</maven-compiler-plugin.version>
         <maven-source-plugin.version>3.3.1</maven-source-plugin.version>
         <maven-javadoc-plugin.version>3.11.2</maven-javadoc-plugin.version>
         <maven-gpg-plugin.version>3.2.7</maven-gpg-plugin.version>
+        <maven-surefire-plugin.version>3.5.4</maven-surefire-plugin.version>
         <central-publishing-maven-plugin.version>0.9.0</central-publishing-maven-plugin.version>
     </properties>
 
@@ -108,6 +110,12 @@
             <artifactId>mybatis-spring</artifactId>
             <version>3.0.5</version>
         </dependency>
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <version>${junit-jupiter.version}</version>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
 
 
@@ -153,6 +161,11 @@
                     </execution>
                 </executions>
             </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <version>${maven-surefire-plugin.version}</version>
+            </plugin>
         </plugins>
     </build>
 
@@ -182,7 +195,7 @@
                         <extensions>true</extensions>
                         <configuration>
                             <publishingServerId>central</publishingServerId>
-                            <autoPublish>false</autoPublish>
+                            <autoPublish>true</autoPublish>
                             <waitUntil>validated</waitUntil>
                         </configuration>
                     </plugin>

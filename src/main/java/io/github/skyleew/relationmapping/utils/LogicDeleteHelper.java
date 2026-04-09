@@ -39,7 +39,7 @@ public class LogicDeleteHelper {
 
         // 查找标注了 @TableLogic 的字段
         Field logicField = null;
-        for (Field f : entityClass.getDeclaredFields()) {
+        for (Field f : ReflectionFieldUtils.getAllFields(entityClass)) {
             if (f.getAnnotation(TableLogic.class) != null) {
                 logicField = f;
                 break;
